@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 namespace F4
 {
 	inline void ShakeCamera(float a_multiplier, RE::NiPoint3 a_origin, float a_duration, float a_strength)
@@ -162,20 +164,54 @@ inline void SetupFilter(RE::bhkPickData& a_pick, RE::Actor* a_actor, RE::BGSProj
 	a_pick.castQuery.filterData.collisionFilterInfo = (collisionGroup << 16) | 0x29;
 }
 
+class ScopedAllHitsCollector final
+{
+public:
+	ScopedAllHitsCollector() noexcept
+	{
+		auto* collector = Get();
+		REX::EMPLACE_VTABLE<RE::hknpAllHitsCollector>(collector);
+		collector->hits.data = collector->hits.storage;
+		collector->hits.size = 0;
+		collector->hits.capacityAndFlags = 0x8000000A;
+
+		using reset_t = void(RE::hknpAllHitsCollector*);
+		static REL::Relocation<reset_t> reset{ REL::ID{ 1360564, 2189457 } };
+		reset(collector);
+	}
+
+	~ScopedAllHitsCollector() noexcept
+	{
+		// Flag 0 destroys the Havok object without deleting this inline storage.
+		// Havok still frees hits.data if AddHit grew it past the 10 inline hits.
+		using scalar_dtor_t = void*(RE::hknpAllHitsCollector*, std::uint32_t);
+		static REL::Relocation<scalar_dtor_t> scalarDtor{ REL::ID{ 1555028, 2189439 } };
+		(void)scalarDtor(Get(), 0);
+	}
+
+	ScopedAllHitsCollector(const ScopedAllHitsCollector&) = delete;
+	ScopedAllHitsCollector(ScopedAllHitsCollector&&) = delete;
+	ScopedAllHitsCollector& operator=(const ScopedAllHitsCollector&) = delete;
+	ScopedAllHitsCollector& operator=(ScopedAllHitsCollector&&) = delete;
+
+	[[nodiscard]] RE::hknpAllHitsCollector* Get() noexcept
+	{
+		return reinterpret_cast<RE::hknpAllHitsCollector*>(storage.data());
+	}
+
+private:
+	alignas(RE::hknpAllHitsCollector) std::array<std::byte, sizeof(RE::hknpAllHitsCollector)> storage{};
+};
+
 inline bool GetPickData(const RE::NiPoint3& a_start, const RE::NiPoint3& a_end, RE::Actor* a_actor,
-	RE::BGSProjectile* a_projectile, RE::bhkPickData& a_pick, bool a_excludeActor = true)
+	RE::BGSProjectile* a_projectile, RE::bhkPickData& a_pick, RE::hknpAllHitsCollector& a_collector,
+	bool a_excludeActor = true)
 {
 	if (!a_actor || !a_actor->parentCell || !a_actor->parentCell->GetbhkWorld()) {
 		return false;
 	}
 	a_pick.SetStartEnd(a_start, a_end);
-	alignas(RE::hknpAllHitsCollector) std::array<std::byte, sizeof(RE::hknpAllHitsCollector)> collectorStorage{};
-	auto* collector = reinterpret_cast<RE::hknpAllHitsCollector*>(collectorStorage.data());
-	REX::EMPLACE_VTABLE<RE::hknpAllHitsCollector>(collector);
-	collector->hits.data = reinterpret_cast<RE::hknpCollisionResult*>(
-		reinterpret_cast<std::uintptr_t>(collector) + 0x30);
-	collector->hits.capacityAndFlags = 0x8000000A;
-	a_pick.collector = collector;
+	a_pick.collector = std::addressof(a_collector);
 	a_pick.collectorType = static_cast<RE::bhkPickData::COLLECTOR_TYPE>(3);
 	SetupFilter(a_pick, a_actor, a_projectile, a_excludeActor);
 	return RE::CombatUtilities::CalculateProjectileLOS(a_actor, a_projectile, a_pick);

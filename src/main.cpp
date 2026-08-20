@@ -315,8 +315,9 @@ void HookedDoHitMe(Actor* a, HitData& hitData)
 						attacker->GetObjectCenter(attackerCenter);
 						dirAttacker.z = 0;
 						dirAttacker = Normalize(dirAttacker);
+						ScopedAllHitsCollector collector;
 						bhkPickData pickData;
-						if (GetPickData(attackerCenter, attackerCenter + dirAttacker * 1000.f, attackingActor, colCheckProj, pickData) && pickData.HasHit()) {
+						if (GetPickData(attackerCenter, attackerCenter + dirAttacker * 1000.f, attackingActor, colCheckProj, pickData, *collector.Get()) && pickData.HasHit()) {
 							//NiAVObject* closestBone = ((ActorEx*)a)->GetClosestBone(pickPos, dirAttacker);
 							NiAVObject* closestBone = pickData.GetNiAVObject();
 							if (closestBone) {
@@ -362,8 +363,9 @@ void HookedDoHitMe(Actor* a, HitData& hitData)
 							NiPoint3 actorCenter;
 							a->GetObjectCenter(actorCenter);
 							NiPoint3 expDir = Normalize(NiPoint3(actorCenter - source->data.location));
+							ScopedAllHitsCollector collector;
 							bhkPickData pickData;
-							if (GetPickData(source->data.location, source->data.location + expDir * 5000.f, a, colCheckProj, pickData, false) && pickData.HasHit()) {
+							if (GetPickData(source->data.location, source->data.location + expDir * 5000.f, a, colCheckProj, pickData, *collector.Get(), false) && pickData.HasHit()) {
 								//NiAVObject* closestBone = ((ActorEx*)a)->GetClosestBone(pickPos, dirAttacker);
 								NiAVObject* closestBone = pickData.GetNiAVObject();
 								if (closestBone) {
