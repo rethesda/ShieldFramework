@@ -1386,8 +1386,8 @@ void InitializeFramework()
 	_MESSAGE("Patching impact form type check %llx", ProcessProjectileFX.address());
 	REL::WriteSafeData(ProcessProjectileFX.address(), static_cast<std::uint8_t>(0xEB));
 
-	damageThresholdAdd = GetAVIFByEditorID(std::string("ShieldDTAdd"));
-	damageThresholdMul = GetAVIFByEditorID(std::string("ShieldDTMul"));
+	damageThresholdAdd = (ActorValueInfo*)GetFormFromMod("ShieldFramework.esm", 0x80E);
+	damageThresholdMul = (ActorValueInfo*)GetFormFromMod("ShieldFramework.esm", 0x80F);
 	colCheckProj = (BGSProjectile*)GetFormFromMod("ShieldFramework.esm", 0x2682);
 
 	pc = PlayerCharacter::GetSingleton();
