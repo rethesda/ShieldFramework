@@ -161,7 +161,7 @@ inline void SetupFilter(RE::bhkPickData& a_pick, RE::Actor* a_actor, RE::BGSProj
 	if (a_excludeActor && a_actor->loadedData) {
 		collisionGroup = a_actor->GetCurrentCollisionGroup();
 	}
-	a_pick.castQuery.filterData.collisionFilterInfo = (collisionGroup << 16) | 0x29;
+	a_pick.castQuery.m_filterData.m_collisionFilterInfo = (collisionGroup << 16) | 0x29;
 }
 
 class ScopedAllHitsCollector final
@@ -171,9 +171,9 @@ public:
 	{
 		auto* collector = Get();
 		REX::EMPLACE_VTABLE<RE::hknpAllHitsCollector>(collector);
-		collector->hits.data = collector->hits.storage;
-		collector->hits.size = 0;
-		collector->hits.capacityAndFlags = 0x8000000A;
+		collector->m_hits.m_data = collector->m_hits.m_storage;
+		collector->m_hits.m_size = 0;
+		collector->m_hits.m_capacityAndFlags = 0x8000000A;
 
 		using reset_t = void(RE::hknpAllHitsCollector*);
 		static REL::Relocation<reset_t> reset{ REL::ID{ 1360564, 2189457 } };
@@ -183,7 +183,7 @@ public:
 	~ScopedAllHitsCollector() noexcept
 	{
 		// Flag 0 destroys the Havok object without deleting this inline storage.
-		// Havok still frees hits.data if AddHit grew it past the 10 inline hits.
+		// Havok still frees m_hits.m_data if AddHit grew it past the 10 inline hits.
 		using scalar_dtor_t = void*(RE::hknpAllHitsCollector*, std::uint32_t);
 		static REL::Relocation<scalar_dtor_t> scalarDtor{ REL::ID{ 1555028, 2189439 } };
 		(void)scalarDtor(Get(), 0);

@@ -617,12 +617,12 @@ void ActivateShieldCollisionObjects(Actor* a)
 							_DEBUGMESSAGE("Obj is not bhkNPCollisionObject or bhkWorld does not exist");
 							return false;
 						}
-						hknpBSWorld* hkWorld = world->worldNP.ptr;
+						hknpBSWorld* hkWorld = world->m_worldNP.get();
 						std::optional<BSAutoWriteLock> worldLock;
 						if (hkWorld) {
-							worldLock.emplace(hkWorld->worldLock);
+							worldLock.emplace(hkWorld->m_worldLock);
 						}
-						colObj->CreateInstance(*world);
+						colObj->CreateInstance(world);
 						CFilter filter;
 						filter.filter = (((a->GetCollisionFilter().filter >> 16) << 16) | 0x1408);
 						colObj->SetCollisionFilterInfo(filter);
