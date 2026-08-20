@@ -7,6 +7,8 @@
 #include <unordered_map>
 //#define DEBUG
 
+using namespace RE;
+
 #ifdef DEBUG
 #define _DEBUGMESSAGE(fmt, ...) _MESSAGE(fmt __VA_OPT__(, ) __VA_ARGS__)
 #else
@@ -43,12 +45,18 @@ struct ShieldData
 	bool isWeapon = false;
 };
 
-ptrdiff_t ProcessProjectileFX_PatchOffset = 0x1A1;
-REL::Relocation<uintptr_t> ProcessProjectileFX{ REL::ID(806412), ProcessProjectileFX_PatchOffset };
-REL::Relocation<uintptr_t> ptr_DoHitMe{ REL::ID(1546751), 0x921 };
-REL::Relocation<uintptr_t> ptr_UpdateSceneGraph{ REL::ID(1318162), 0xD5 };
-REL::Relocation<uintptr_t> ptr_Demand3D{ REL::ID(736753), 0xB4 };
-static bhkPickData* pick;
+REL::Relocation<uintptr_t> ProcessProjectileFX{
+	REL::ID{ 806412, 2237072 }, REX::FModule::IsRuntimeOG() ? 0x1A1 : 0x1DE
+};
+REL::Relocation<uintptr_t> ptr_DoHitMe{
+	REL::ID{ 1546751, 2229323 }, REX::FModule::IsRuntimeOG() ? 0x921 : 0x8F7
+};
+REL::Relocation<uintptr_t> ptr_UpdateSceneGraph{
+	REL::ID{ 1318162, 2228929 }, REX::FModule::IsRuntimeOG() ? 0xD5 : 0xD6
+};
+REL::Relocation<uintptr_t> ptr_Demand3D{
+	REL::ID{ 736753, 2189024 }, REX::FModule::IsRuntimeOG() ? 0xB4 : 0x1E2
+};
 static uintptr_t DoHitMeOrig;
 static uintptr_t UpdateSceneGraphOrig;
 static uintptr_t Demand3DOrig;
@@ -256,14 +264,15 @@ void HookedDoHitMe(Actor* a, HitData& hitData)
 	std::vector<PartData>::iterator blockedPart;
 	auto sdlist = GetEquippedShieldDataList(a);
 	for (auto sdlookup = sdlist.begin(); sdlookup != sdlist.end(); ++sdlookup) {
+		auto* collisionObj = GetCollisionObject(hitData);
 #ifdef DEBUG
 		if (sdlookup == sdlist.begin()) {
 			_DEBUGMESSAGE("HookedDoHitMe - ShieldHolder %llx hit with dmg %f", a->formID, hitData.totalDamage);
-			if (hitData.impactData.collisionObj && hitData.impactData.collisionObj->sceneObject) {
-				_DEBUGMESSAGE("HookedDoHitMe - Collision object %s at %llx", hitData.impactData.collisionObj->sceneObject->name.c_str(), hitData.impactData.collisionObj->sceneObject);
+			if (collisionObj && collisionObj->sceneObject) {
+				_DEBUGMESSAGE("HookedDoHitMe - Collision object %s at %llx", collisionObj->sceneObject->name.c_str(), collisionObj->sceneObject);
 			}
-			if (hitData.sourceHandle.get().get()) {
-				_DEBUGMESSAGE("HookedDoHitMe - Source formID %llx at %llx", hitData.sourceHandle.get()->formID, hitData.sourceHandle.get().get());
+			if (hitData.sourceRef.get().get()) {
+				_DEBUGMESSAGE("HookedDoHitMe - Source formID %llx at %llx", hitData.sourceRef.get()->formID, hitData.sourceRef.get().get());
 			}
 		}
 #endif
@@ -279,17 +288,17 @@ void HookedDoHitMe(Actor* a, HitData& hitData)
 		} else {
 			float dtAdd = a->GetActorValue(*damageThresholdAdd);
 			float dtMul = a->GetActorValue(*damageThresholdMul);
-			if (hitData.impactData.collisionObj) {
+			if (collisionObj) {
 				_DEBUGMESSAGE("HookedDoHitMe - Projectile Check");
 				for (auto partit = od->parts.begin(); partit != od->parts.end(); ++partit) {
-					NiAVObject* parent = hitData.impactData.collisionObj->sceneObject;
+					NiAVObject* parent = collisionObj->sceneObject;
 					if (parent && parent->name == partit->partName) {
 						_DEBUGMESSAGE("HookedDoHitMe - Threshold %f", (partit->damageThreshold + dtAdd) * dtMul);
 						hasCollObj = true;
 						blockedPart = partit;
 						if (partit->damageThreshold < 0 || hitData.totalDamage < (partit->damageThreshold + dtAdd) * dtMul) {
 							doDamage = false;
-							hitData.SetAllDamageToZero();
+							SetAllDamageToZero(hitData);
 							_DEBUGMESSAGE("HookedDoHitMe - Damage blocked");
 							break;
 						}
@@ -298,20 +307,21 @@ void HookedDoHitMe(Actor* a, HitData& hitData)
 			} else {
 				if (hitData.attackData) {
 					_DEBUGMESSAGE("HookedDoHitMe - Melee Check");
-					TESObjectREFR* attacker = hitData.attackerHandle.get().get();
+					TESObjectREFR* attacker = hitData.aggressor.get().get();
 					if (attacker && attacker->formType == ENUM_FORM_ID::kACHR) {
 						NiPoint3 eyeAttacker, dirAttacker, attackerCenter;
-						((ActorEx*)attacker)->GetEyeVector(eyeAttacker, dirAttacker, false);
-						((TESObjectREFREx*)attacker)->GetObjectCenter(attackerCenter);
+						auto* attackingActor = static_cast<Actor*>(attacker);
+						attackingActor->GetEyeVector(eyeAttacker, dirAttacker, false);
+						attacker->GetObjectCenter(attackerCenter);
 						dirAttacker.z = 0;
 						dirAttacker = Normalize(dirAttacker);
-						GetPickData(attackerCenter, attackerCenter + dirAttacker * 1000.f, (Actor*)attacker, colCheckProj, *pick);
-						if (pick->HasHit()) {
-							NiPoint3 pickPos = NiPoint3(*(float*)((uintptr_t)pick + 0x60), *(float*)((uintptr_t)pick + 0x64), *(float*)((uintptr_t)pick + 0x68)) / *ptr_fBS2HkScale;
+						ScopedAllHitsCollector collector;
+						bhkPickData pickData;
+						if (GetPickData(attackerCenter, attackerCenter + dirAttacker * 1000.f, attackingActor, colCheckProj, pickData, *collector.Get()) && pickData.HasHit()) {
 							//NiAVObject* closestBone = ((ActorEx*)a)->GetClosestBone(pickPos, dirAttacker);
-							NiAVObject* closestBone = pick->GetNiAVObject();
-							_DEBUGMESSAGE("HookedDoHitMe - Closest Bone %llx (%s)", closestBone, closestBone->name.c_str());
+							NiAVObject* closestBone = pickData.GetNiAVObject();
 							if (closestBone) {
+								_DEBUGMESSAGE("HookedDoHitMe - Closest Bone %llx (%s)", closestBone, closestBone->name.c_str());
 								for (auto partit = od->parts.begin(); partit != od->parts.end(); ++partit) {
 									if (closestBone->name == partit->partName) {
 										_DEBUGMESSAGE("HookedDoHitMe - Threshold %f", (partit->damageThreshold + dtAdd) * dtMul);
@@ -319,7 +329,7 @@ void HookedDoHitMe(Actor* a, HitData& hitData)
 										blockedPart = partit;
 										if (partit->damageThreshold < 0 || hitData.totalDamage < (partit->damageThreshold + dtAdd) * dtMul) {
 											doDamage = false;
-											hitData.SetAllDamageToZero();
+											SetAllDamageToZero(hitData);
 											_DEBUGMESSAGE("HookedDoHitMe - Damage blocked");
 											break;
 										}
@@ -327,15 +337,15 @@ void HookedDoHitMe(Actor* a, HitData& hitData)
 								}
 							}
 						}
-						pick->Reset();
+						pickData.Reset();
 					}
 				} else {
-					TESObjectREFR* source = hitData.sourceHandle.get().get();
+					TESObjectREFR* source = hitData.sourceRef.get().get();
 					if (source) {
 						_DEBUGMESSAGE("HookedDoHitMe - Explosion Check");
 						BGSProjectile* baseProj = hitData.ammo ? hitData.ammo->data.projectile : nullptr;
-						TESObjectWEAP* weap = (TESObjectWEAP*)hitData.source.object;
-						TESObjectWEAP::InstanceData* weapInstance = (TESObjectWEAP::InstanceData*)hitData.source.instanceData.get();
+						TESObjectWEAP* weap = static_cast<TESObjectWEAP*>(hitData.weapon.object);
+						TESObjectWEAP::InstanceData* weapInstance = (TESObjectWEAP::InstanceData*)hitData.weapon.instanceData.get();
 						if (weapInstance) {
 							if (weapInstance->rangedData && weapInstance->rangedData->overrideProjectile) {
 								baseProj = weapInstance->rangedData->overrideProjectile;
@@ -351,15 +361,15 @@ void HookedDoHitMe(Actor* a, HitData& hitData)
 						}
 						if ((baseProj && baseProj->data.explosionType) || source->GetObjectReference()->formType == ENUM_FORM_ID::kEXPL) {
 							NiPoint3 actorCenter;
-							((TESObjectREFREx*)a)->GetObjectCenter(actorCenter);
+							a->GetObjectCenter(actorCenter);
 							NiPoint3 expDir = Normalize(NiPoint3(actorCenter - source->data.location));
-							GetPickData(source->data.location, source->data.location + expDir * 5000.f, a, colCheckProj, *pick, false);
-							if (pick->HasHit()) {
-								NiPoint3 pickPos = NiPoint3(*(float*)((uintptr_t)pick + 0x60), *(float*)((uintptr_t)pick + 0x64), *(float*)((uintptr_t)pick + 0x68)) / *ptr_fBS2HkScale;
+							ScopedAllHitsCollector collector;
+							bhkPickData pickData;
+							if (GetPickData(source->data.location, source->data.location + expDir * 5000.f, a, colCheckProj, pickData, *collector.Get(), false) && pickData.HasHit()) {
 								//NiAVObject* closestBone = ((ActorEx*)a)->GetClosestBone(pickPos, dirAttacker);
-								NiAVObject* closestBone = pick->GetNiAVObject();
-								_DEBUGMESSAGE("HookedDoHitMe - Closest Bone %llx (%s)", closestBone, closestBone->name.c_str());
+								NiAVObject* closestBone = pickData.GetNiAVObject();
 								if (closestBone) {
+									_DEBUGMESSAGE("HookedDoHitMe - Closest Bone %llx (%s)", closestBone, closestBone->name.c_str());
 									for (auto partit = od->parts.begin(); partit != od->parts.end(); ++partit) {
 										if (closestBone->name == partit->partName) {
 											_DEBUGMESSAGE("HookedDoHitMe - Threshold %f", (partit->damageThreshold + dtAdd) * dtMul);
@@ -367,7 +377,7 @@ void HookedDoHitMe(Actor* a, HitData& hitData)
 											blockedPart = partit;
 											if (partit->damageThreshold < 0 || hitData.totalDamage < (partit->damageThreshold + dtAdd) * dtMul) {
 												doDamage = false;
-												hitData.SetAllDamageToZero();
+												SetAllDamageToZero(hitData);
 												_DEBUGMESSAGE("HookedDoHitMe - Damage blocked");
 												break;
 											}
@@ -375,7 +385,7 @@ void HookedDoHitMe(Actor* a, HitData& hitData)
 									}
 								}
 							}
-							pick->Reset();
+							pickData.Reset();
 						}
 					}
 				}
@@ -383,27 +393,27 @@ void HookedDoHitMe(Actor* a, HitData& hitData)
 		}
 	}
 	if (hasCollObj) {
-		TESObjectREFR* attacker = hitData.attackerHandle.get().get();
+		TESObjectREFR* attacker = hitData.aggressor.get().get();
 		if (doDamage) {
 			if (blockedPart->spell_victim) {
 				_DEBUGMESSAGE("HookedDoHitMe - Casting spell on victim (Non-block)");
-				blockedPart->spell_victim->Cast(a, a, a, GameVM::GetSingleton()->GetVM().get());
+				CastSpell(blockedPart->spell_victim, a, a, a);
 			}
 			if (blockedPart->spell_attacker) {
 				if (attacker && attacker->formType == ENUM_FORM_ID::kACHR) {
 					_DEBUGMESSAGE("HookedDoHitMe - Casting spell on attacker (Non-block)");
-					blockedPart->spell_attacker->Cast(a, attacker, (Actor*)attacker, GameVM::GetSingleton()->GetVM().get());
+					CastSpell(blockedPart->spell_attacker, a, attacker, static_cast<Actor*>(attacker));
 				}
 			}
 		} else {
 			if (blockedPart->spell_blocked_victim) {
 				_DEBUGMESSAGE("HookedDoHitMe - Casting spell on victim (Blocked)");
-				blockedPart->spell_blocked_victim->Cast(a, a, a, GameVM::GetSingleton()->GetVM().get());
+				CastSpell(blockedPart->spell_blocked_victim, a, a, a);
 			}
 			if (blockedPart->spell_blocked_attacker) {
 				if (attacker && attacker->formType == ENUM_FORM_ID::kACHR) {
 					_DEBUGMESSAGE("HookedDoHitMe - Casting spell on attacker (Blocked)");
-					blockedPart->spell_blocked_attacker->Cast(a, attacker, (Actor*)attacker, GameVM::GetSingleton()->GetVM().get());
+					CastSpell(blockedPart->spell_blocked_attacker, a, attacker, static_cast<Actor*>(attacker));
 				}
 			}
 		}
@@ -434,7 +444,7 @@ void HookedUpdateSceneGraph(PlayerCharacter* p)
 						obj->local.rotate = found->world.rotate * Transpose(obj->parent->world.rotate);
 						obj->local.translate = obj->parent->world.rotate * (*F4::ptr_kCurrentWorldLoc + fpdiff - obj->parent->world.translate);
 						NiUpdateData ud = NiUpdateData();
-						ud.unk10 = 0x303;
+						ud.flags = 0x303;
 						obj->UpdateTransforms(ud);
 					} else if (animatedBones.find(std::string(obj->name)) != animatedBones.end()) {
 						if (obj->parent && found->parent) {
@@ -445,7 +455,7 @@ void HookedUpdateSceneGraph(PlayerCharacter* p)
 							obj->local.translate = found->local.translate;
 						}
 						NiUpdateData ud = NiUpdateData();
-						ud.unk10 = 0x303;
+						ud.flags = 0x303;
 						obj->UpdateTransforms(ud);
 					}
 				}
@@ -485,20 +495,20 @@ NiAVObject* HookedOMODDemand3D(BGSMod::Attachment::Mod* mod, uintptr_t loadData,
 
 void SetMainOMODLooseMod(const OMODData& od)
 {
-	TESObjectMISC* looseMod = ((BGSMod::Attachment::ModEx*)od.groundOMOD)->GetLooseMod();
+	TESObjectMISC* looseMod = od.groundOMOD->GetLooseMod();
 	if (looseMod) {
-		((BGSMod::Attachment::ModEx*)od.mainOMOD)->SetLooseMod(looseMod);
-		((BGSMod::Attachment::ModEx*)od.groundOMOD)->SetLooseMod(nullptr);
+		od.mainOMOD->SetLooseMod(looseMod);
+		od.groundOMOD->SetLooseMod(nullptr);
 		_MESSAGE("Loose mod swapped ground->main");
 	}
 }
 
 void SetGroundOMODLooseMod(const OMODData& od)
 {
-	TESObjectMISC* looseMod = ((BGSMod::Attachment::ModEx*)od.mainOMOD)->GetLooseMod();
+	TESObjectMISC* looseMod = od.mainOMOD->GetLooseMod();
 	if (looseMod) {
-		((BGSMod::Attachment::ModEx*)od.groundOMOD)->SetLooseMod(looseMod);
-		((BGSMod::Attachment::ModEx*)od.mainOMOD)->SetLooseMod(nullptr);
+		od.groundOMOD->SetLooseMod(looseMod);
+		od.mainOMOD->SetLooseMod(nullptr);
 		_MESSAGE("Loose mod swapped main->ground");
 	}
 }
@@ -607,18 +617,16 @@ void ActivateShieldCollisionObjects(Actor* a)
 							_DEBUGMESSAGE("Obj is not bhkNPCollisionObject or bhkWorld does not exist");
 							return false;
 						}
-						hknpBSWorld* hkWorld = *(hknpBSWorld**)((uintptr_t)world + 0x60);
+						hknpBSWorld* hkWorld = world->m_worldNP.get();
+						std::optional<BSAutoWriteLock> worldLock;
 						if (hkWorld) {
-							hkWorld->MarkForWrite();
+							worldLock.emplace(hkWorld->m_worldLock);
 						}
-						colObj->CreateInstance(*world);
+						colObj->CreateInstance(world);
 						CFilter filter;
-						filter.filter = ((((ActorEx*)a)->GetCollisionFilter().filter >> 16) << 16) | 0x1408;
+						filter.filter = ((a->GetCurrentCollisionGroup() << 16) | 0x1408);
 						colObj->SetCollisionFilterInfo(filter);
-						colObj->SetMotionType(hknpMotionPropertiesId::Preset::KEYFRAMED);
-						if (hkWorld) {
-							hkWorld->UnmarkForWrite();
-						}
+						colObj->SetMotionType(hknpMotionPropertiesId::Preset::kKeyframed);
 						return false;
 					});
 					_DEBUGMESSAGE("ActivateShieldCollisionObjects - Done", obj->name.c_str());
@@ -650,7 +658,7 @@ void CheckShieldOMOD(Actor* a, bool forceRequip = false)
 						_DEBUGMESSAGE("CheckShieldOMOD - Is Equipped");
 						if (HasMod(invitem, omodit->groundOMOD)) {
 							AttachMainOMOD_Internal(a, *omodit, invitem);
-							GameScript::PostModifyInventoryItemMod(a, invitem->object, false);
+							PostModifyInventoryItemMod(a, invitem->object, false);
 							hasShield = true;
 							_MESSAGE("Actor %llx CheckShieldOMOD->AttachMainOMOD", a->formID);
 							break;
@@ -703,14 +711,14 @@ public:
 	virtual BSEventNotifyControl ProcessEvent(const TESEquipEvent& evn, BSTEventSource<TESEquipEvent>* a_source)
 	{
 		if (!isInWorkbench) {
-			TESForm* item = TESForm::GetFormByID(evn.formId);
+			TESForm* item = TESForm::GetFormByID(evn.baseObject);
 			if (item && (item->formType == ENUM_FORM_ID::kWEAP)) {
-				auto sdlookup = GetShieldData(evn.formId);
+				auto sdlookup = GetShieldData(evn.baseObject);
 				if (sdlookup != shieldDataMap.end()) {
-					if (evn.isEquip) {
-						AttachMainOMOD(evn.a, evn.formId, sdlookup->second);
+					if (evn.equipped) {
+						AttachMainOMOD(static_cast<Actor*>(evn.actor.get()), evn.baseObject, sdlookup->second);
 					} else {
-						AttachGroundOMOD(evn.a, evn.formId, sdlookup->second);
+						AttachGroundOMOD(static_cast<Actor*>(evn.actor.get()), evn.baseObject, sdlookup->second);
 					}
 				}
 			}
@@ -726,10 +734,10 @@ public:
 	virtual BSEventNotifyControl ProcessEvent(const TESObjectLoadedEvent& evn, BSTEventSource<TESObjectLoadedEvent>* a_source)
 	{
 		if (!evn.loaded) {
-			omodDataCache.erase(evn.formId);
+			omodDataCache.erase(evn.formID);
 			return BSEventNotifyControl::kContinue;
 		}
-		TESForm* form = TESForm::GetFormByID(evn.formId);
+		TESForm* form = TESForm::GetFormByID(evn.formID);
 		if (form) {
 			if (form->formType == ENUM_FORM_ID::kACHR) {
 				Actor* a = static_cast<Actor*>(form);
@@ -747,7 +755,7 @@ class MenuWatcher : public BSTEventSink<MenuOpenCloseEvent>
 	{
 		if (!evn.opening && evn.menuName == BSFixedString("LoadingMenu")) {
 			omodDataCache.clear();
-			BSTArray<ActorHandle>* highActorHandles = (BSTArray<ActorHandle>*)(F4::ptr_processLists.address() + 0x40);
+		BSTArray<ActorHandle>* highActorHandles = &ProcessLists::GetSingleton()->highActorHandles;
 			if (highActorHandles->size() > 0) {
 				for (auto it = highActorHandles->begin(); it != highActorHandles->end(); ++it) {
 					Actor* a = it->get().get();
@@ -1376,7 +1384,7 @@ void InitializeFramework()
 	//0x1A1 from this function is the part where it checks the form type of collidee and play the impact effect based on the race data.
 	//This will modify that behavior, forcing the game to always use the projectile impact data's materialType for the impact effect.
 	_MESSAGE("Patching impact form type check %llx", ProcessProjectileFX.address());
-	REL::safe_write(ProcessProjectileFX.address(), (uint8_t)0xEB);
+	REL::WriteSafeData(ProcessProjectileFX.address(), static_cast<std::uint8_t>(0xEB));
 
 	damageThresholdAdd = GetAVIFByEditorID(std::string("ShieldDTAdd"));
 	damageThresholdMul = GetAVIFByEditorID(std::string("ShieldDTMul"));
@@ -1384,61 +1392,23 @@ void InitializeFramework()
 
 	pc = PlayerCharacter::GetSingleton();
 	pcam = PlayerCamera::GetSingleton();
-	pick = new bhkPickData();
 	_MESSAGE("PlayerCharacter %llx", pc);
 }
 
-extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_f4se, F4SE::PluginInfo* a_info)
+F4SEPluginLoad(const F4SE::LoadInterface* a_f4se)
 {
-#ifndef NDEBUG
-	auto sink = std::make_shared<spdlog::sinks::msvc_sink_mt>();
-#else
-	auto path = logger::log_directory();
-	if (!path) {
-		return false;
-	}
+	F4SE::Init(a_f4se, {
+		.log = true,
+		.logName = "ShieldFramework",
+		.trampoline = true,
+		.trampolineSize = 64,
+	});
+	const auto isOG = REX::FModule::IsRuntimeOG();
+	const auto executableVersion = REX::FModule::GetExecutingModule().GetFileVersion();
+	REX::INFO("detected Fallout 4 runtime={} f4seRuntimeVersion={} executableVersion={}",
+		isOG ? "OG" : "AE", a_f4se->RuntimeVersion().string(), executableVersion.string());
 
-	*path /= "ShieldFramework.log"sv;
-	auto sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true);
-#endif
-
-	auto log = std::make_shared<spdlog::logger>("global log"s, std::move(sink));
-
-#ifndef NDEBUG
-	log->set_level(spdlog::level::trace);
-#else
-	log->set_level(spdlog::level::info);
-	log->flush_on(spdlog::level::warn);
-#endif
-
-	spdlog::set_default_logger(std::move(log));
-	spdlog::set_pattern("%g(%#): [%^%l%$] %v"s);
-
-	a_info->infoVersion = F4SE::PluginInfo::kVersion;
-	a_info->name = "ShieldFramework";
-	a_info->version = 1;
-
-	if (a_f4se->IsEditor()) {
-		logger::critical("loaded in editor"sv);
-		return false;
-	}
-
-	const auto ver = a_f4se->RuntimeVersion();
-	if (ver < F4SE::RUNTIME_1_10_162) {
-		logger::critical("unsupported runtime v{}"sv, ver.string());
-		return false;
-	}
-
-	F4SE::AllocTrampoline(8 * 8);
-
-	return true;
-}
-
-extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
-{
-	F4SE::Init(a_f4se);
-
-	F4SE::Trampoline& trampoline = F4SE::GetTrampoline();
+	auto& trampoline = REL::GetTrampoline();
 	DoHitMeOrig = trampoline.write_call<5>(ptr_DoHitMe.address(), &HookedDoHitMe);
 	UpdateSceneGraphOrig = trampoline.write_call<5>(ptr_UpdateSceneGraph.address(), &HookedUpdateSceneGraph);
 	Demand3DOrig = trampoline.write_call<5>(ptr_Demand3D.address(), &HookedOMODDemand3D);
@@ -1450,9 +1420,9 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 			InitializeImpactData();
 			InitializeFramework();
 			EquipWatcher* ew = new EquipWatcher();
-			EquipEventSource::GetSingleton()->RegisterSink(ew);
+			GetEquipEventSource()->RegisterSink(ew);
 			ObjectLoadWatcher* olw = new ObjectLoadWatcher();
-			ObjectLoadedEventSource::GetSingleton()->RegisterSink(olw);
+			TESObjectLoadedEvent::GetEventSource()->RegisterSink(olw);
 			MenuWatcher* mew = new MenuWatcher();
 			UI::GetSingleton()->GetEventSource<MenuOpenCloseEvent>()->RegisterSink(mew);
 		}
