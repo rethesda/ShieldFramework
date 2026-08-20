@@ -1429,3 +1429,19 @@ F4SEPluginLoad(const F4SE::LoadInterface* a_f4se)
 	});
 	return true;
 }
+
+extern "C"
+{
+	F4SE_EXPORT bool F4SEPlugin_Query(const F4SE::QueryInterface*, F4SE::PluginInfo* a_info)
+	{
+		const auto* versionData = F4SE::PluginVersionData::GetSingleton();
+		if (!versionData) {
+			return false;
+		}
+
+		a_info->name = versionData->GetPluginName().data();
+		a_info->infoVersion = F4SE::PluginInfo::kVersion;
+		a_info->version = versionData->pluginVersion;
+		return true;
+	}
+}
