@@ -624,7 +624,7 @@ void ActivateShieldCollisionObjects(Actor* a)
 						}
 						colObj->CreateInstance(world);
 						CFilter filter;
-						filter.filter = (((a->GetCollisionFilter().filter >> 16) << 16) | 0x1408);
+						filter.filter = ((a->GetCurrentCollisionGroup() << 16) | 0x1408);
 						colObj->SetCollisionFilterInfo(filter);
 						colObj->SetMotionType(hknpMotionPropertiesId::Preset::kKeyframed);
 						return false;
